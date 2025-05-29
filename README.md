@@ -21,8 +21,8 @@ The monorepo in which you want to run `container-watch` should have the followin
 │   └── docker-compose.yml
 ├── project2
 │   └── docker-compose.yml
-├── project3
-│   └── docker-compose.yml
+└── project3
+    └── docker-compose.yml
 ```
 
 ## Usage
