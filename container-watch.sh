@@ -8,7 +8,6 @@
 
 set -u  # Abort on unset vars
 
-# ANSI color codes
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
@@ -43,21 +42,32 @@ while [[ ${1:-} != "" ]]; do
   esac
 done
 
+LOCK_FILE=".container-watch.lock"
+LOCK_HELD=false
+
+cleanup() {
+  if [[ "$LOCK_HELD" == true ]]; then
+    rm "$LOCK_FILE"
+  fi
+}
+trap cleanup EXIT
+
+# Check to see if .container-watch.lock exists
+if [[ -f "$LOCK_FILE" && "$FORCE_RUN" == false ]]; then
+  echo -e "${RED}[ERROR] Found .container-watch.lock. This script is probably already running. Exiting...${NC}"
+  exit 1
+fi
+
+# Create lock file and record that we own it
+touch "$LOCK_FILE"
+LOCK_HELD=true
+
 # Ensure we're on 'main' branch
 current_branch=$(git rev-parse --abbrev-ref HEAD)
 if [[ "$current_branch" != "main" ]]; then
   echo -e "${BLUE}[INFO] Switching from '$current_branch' to 'main'...${NC}"
   git checkout main || { echo -e "${RED}[ERROR] Failed to checkout main${NC}"; exit 1; }
 fi
-
-# Check to see if .container-watch.lock exists
-if [[ -f .container-watch.lock && "$FORCE_RUN" == false ]]; then
-  echo -e "${RED}[ERROR] Found .container-watch.lock. This script is probably already running. Exiting...${NC}"
-  exit 1
-fi
-
-# Create .container-watch.lock
-touch .container-watch.lock
 
 # Function: perform project redeploy
 redeploy_project() {
@@ -184,9 +194,6 @@ for dir in "${all_dirs[@]}"; do
     echo ""
   fi
 done
-
-# Remove .container-watch.lock
-rm .container-watch.lock
 
 if [[ "$updated_any" == false ]]; then
   echo -e "${BLUE}[INFO] No services were updated.${NC}"
