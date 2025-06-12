@@ -16,6 +16,7 @@ NC='\033[0m' # No Color
 
 REPO_ROOT="$(pwd)"
 FORCE_ALL=false
+FORCE_RUN=false
 CHECK_IMAGES=false
 
 # Parse flags
