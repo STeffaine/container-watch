@@ -141,11 +141,14 @@ git fetch origin main || { echo -e "${RED}[ERROR] git fetch failed${NC}"; exit 1
 changed_dirs=""
 if [[ "$FORCE_ALL" == false ]]; then
   changed_files=$(git diff --name-only HEAD..origin/main)
-  changed_dirs=$(echo "$changed_files" \
-    | grep -E 'docker-compose\.ya?ml$' \
-    | xargs -n1 dirname \
-    | sed 's|^\./||' \
-    | sort -u)
+  compose_files=$(echo "$changed_files" | grep -E 'docker-compose\.ya?ml$' || true)
+
+  if [[ -n "$compose_files" ]]; then
+    changed_dirs=$(echo "$compose_files" \
+      | xargs -n1 dirname \
+      | sed 's|^\./||' \
+      | sort -u)
+  fi
 fi
 
 echo -e "${BLUE}[INFO] Pulling latest changes from origin/main...${NC}"
