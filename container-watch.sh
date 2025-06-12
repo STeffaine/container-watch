@@ -45,6 +45,15 @@ if [[ "$current_branch" != "main" ]]; then
   git checkout main || { echo -e "${RED}[ERROR] Failed to checkout main${NC}"; exit 1; }
 fi
 
+# Check to see if .container-watch.lock exists
+if [[ -f .container-watch.lock ]]; then
+  echo -e "${RED}[ERROR] Found .container-watch.lock. This script is probably already running. Exiting...${NC}"
+  exit 1
+fi
+
+# Create .container-watch.lock
+touch .container-watch.lock
+
 # Function: perform project redeploy
 redeploy_project() {
   local proj_dir="$1"
@@ -170,6 +179,9 @@ for dir in "${all_dirs[@]}"; do
     echo ""
   fi
 done
+
+# Remove .container-watch.lock
+rm .container-watch.lock
 
 if [[ "$updated_any" == false ]]; then
   echo -e "${BLUE}[INFO] No services were updated.${NC}"
