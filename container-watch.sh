@@ -22,6 +22,11 @@ CHECK_IMAGES=false
 # Parse flags
 while [[ ${1:-} != "" ]]; do
   case "$1" in
+    --force-run)
+      FORCE_RUN=true
+      echo -e "${BLUE}[INFO] Running in FORCE RUN mode: will run no matter what.${NC}"
+      shift
+      ;;
     --force-all)
       FORCE_ALL=true
       echo -e "${BLUE}[INFO] Running in FORCE ALL mode: will update all currently running projects.${NC}"
@@ -46,7 +51,7 @@ if [[ "$current_branch" != "main" ]]; then
 fi
 
 # Check to see if .container-watch.lock exists
-if [[ -f .container-watch.lock ]]; then
+if [[ -f .container-watch.lock && "$FORCE_RUN" == false ]]; then
   echo -e "${RED}[ERROR] Found .container-watch.lock. This script is probably already running. Exiting...${NC}"
   exit 1
 fi
