@@ -135,30 +135,22 @@ if [[ "$CHECK_IMAGES" == true ]]; then
   exit 0
 fi
 
+# Default update flow
+echo -e "${BLUE}[INFO] Fetching latest changes from origin/main...${NC}"
+git fetch origin main || { echo -e "${RED}[ERROR] git fetch failed${NC}"; exit 1; }
+
 changed_dirs=""
 if [[ "$FORCE_ALL" == false ]]; then
-  echo -e "${BLUE}[INFO] Fetching changes from origin/main...${NC}"
-  git fetch origin main || { echo -e "${RED}[ERROR] git fetch failed${NC}"; exit 1; }
-
   changed_files=$(git diff --name-only HEAD..origin/main)
-  compose_files=$(echo "$changed_files" | grep -E 'docker-compose\.ya?ml$' || true)
-
-  if [[ -n "$compose_files" ]]; then
-    changed_dirs=$(echo "$compose_files" \
-      | xargs -n1 dirname \
-      | sed 's|^\./||' \
-      | sort -u)
-  fi
-
-  if [[ -z "$changed_dirs" ]]; then
-    echo -e "${BLUE}[INFO] No compose file changes detected.${NC}"
-    exit 0
-  fi
-
-  echo -e "${BLUE}[INFO] Pulling latest changes from origin/main...${NC}"
-  git pull origin main || { echo -e "${RED}[ERROR] git pull failed${NC}"; exit 1; }
+  changed_dirs=$(echo "$changed_files" \
+    | grep -E 'docker-compose\.ya?ml$' \
+    | xargs -n1 dirname \
+    | sed 's|^\./||' \
+    | sort -u)
 fi
 
+echo -e "${BLUE}[INFO] Pulling latest changes from origin/main...${NC}"
+git pull origin main || { echo -e "${RED}[ERROR] git pull failed${NC}"; exit 1; }
 
 if [[ "$FORCE_ALL" == false && -z "$changed_dirs" ]]; then
   echo -e "${BLUE}[INFO] No compose file changes detected.${NC}"
