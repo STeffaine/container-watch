@@ -5,6 +5,8 @@
 # - Only restarts if the project is already running
 # - Optional: force update all currently running projects with --force-all
 # - Optional: check-image consistency with --check-images (with colored output)
+# - Optional: Ignore specific image(s) with --ignore-images
+# - Optional: Ignore specific project(s) with --ignore-project
 
 set -u  # Abort on unset vars
 
@@ -18,6 +20,8 @@ REPO_ROOT="$(pwd)"
 FORCE_ALL=false
 FORCE_RUN=false
 CHECK_IMAGES=false
+IGNORE_IMAGES=()
+IGNORE_PROJECTS=()
 
 # Parse flags
 while [[ ${1:-} != "" ]]; do
@@ -36,6 +40,22 @@ while [[ ${1:-} != "" ]]; do
       CHECK_IMAGES=true
       echo -e "${BLUE}[INFO] Running in CHECK IMAGES mode: will validate running container images against compose definitions.${NC}"
       shift
+      ;;
+    --ignore-images)
+      shift
+      while [[ ${1:-} != "" && ! "$1" =~ ^-- ]]; do
+        IGNORE_IMAGES+=("$1")
+        shift
+      done
+      echo -e "${BLUE}[INFO] Ignoring images: ${IGNORE_IMAGES[*]}${NC}"
+      ;;
+    --ignore-project)
+      shift
+      while [[ ${1:-} != "" && ! "$1" =~ ^-- ]]; do
+        IGNORE_PROJECTS+=("$1")
+        shift
+      done
+      echo -e "${BLUE}[INFO] Ignoring projects: ${IGNORE_PROJECTS[*]}${NC}"
       ;;
     *)
       break
@@ -88,6 +108,10 @@ check_images() {
   # Find immediate subdirectories
   mapfile -t dirs < <(find . -mindepth 1 -maxdepth 1 -type d -printf '%f\n')
   for dir in "${dirs[@]}"; do
+    # Skip ignored projects
+    if [[ " ${IGNORE_PROJECTS[@]} " =~ " $dir " ]]; then
+      continue
+    fi
     project_dir="$REPO_ROOT/$dir"
     compose_file="$project_dir/docker-compose.yml"
     [[ -f "$compose_file" ]] || continue
@@ -106,6 +130,11 @@ check_images() {
           awk -v svc="$svc" '
             $1 == svc":" {flag=1; next} \
             flag && $1 == "image:" {print $2; exit}')
+        # Check if image should be ignored
+        if [[ " ${IGNORE_IMAGES[@]} " =~ " $expected " ]]; then
+          echo -e "  ${BLUE}[SKIP] Ignoring image $expected for service '$svc'${NC}"
+          continue
+        fi
         # Get container ID
         cid=$(docker compose -p "$dir" -f "$compose_file" ps -q "$svc")
         if [[ -z "$cid" ]]; then
@@ -172,6 +201,10 @@ fi
 mapfile -t all_dirs < <(find . -mindepth 1 -maxdepth 1 -type d -printf '%f\n')
 updated_any=false
 for dir in "${all_dirs[@]}"; do
+  # Skip ignored projects
+  if [[ " ${IGNORE_PROJECTS[@]} " =~ " $dir " ]]; then
+    continue
+  fi
   project_dir="$REPO_ROOT/$dir"
   [[ -f "$project_dir/docker-compose.yml" ]] || continue
   project_name="$dir"
