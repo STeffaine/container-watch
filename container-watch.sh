@@ -7,6 +7,7 @@
 # - Optional: check-image consistency with --check-images (with colored output)
 # - Optional: Ignore specific image(s) with --ignore-images
 # - Optional: Ignore specific project(s) with --ignore-project
+# - Optional: Prune images with --prune-images
 
 set -u  # Abort on unset vars
 
@@ -22,6 +23,7 @@ FORCE_RUN=false
 CHECK_IMAGES=false
 IGNORE_IMAGES=()
 IGNORE_PROJECTS=()
+PRUNE_IMAGES=false
 
 # Parse flags
 while [[ ${1:-} != "" ]]; do
@@ -56,6 +58,11 @@ while [[ ${1:-} != "" ]]; do
         shift
       done
       echo -e "${BLUE}[INFO] Ignoring projects: ${IGNORE_PROJECTS[*]}${NC}"
+      ;;
+    --prune-images)
+      PRUNE_IMAGES=true
+      echo -e "${BLUE}[INFO] Running in PRUNE IMAGES mode: will prune images that are no longer referenced.${NC}"
+      shift
       ;;
     *)
       break
@@ -239,6 +246,11 @@ for dir in "${all_dirs[@]}"; do
     echo ""
   fi
 done
+
+if [[ "$PRUNE_IMAGES" == true ]]; then
+  echo -e "${BLUE}[INFO] Pruning images...${NC}"
+  docker image prune -f
+fi
 
 if [[ "$updated_any" == false ]]; then
   echo -e "${BLUE}[INFO] No services were updated.${NC}"
