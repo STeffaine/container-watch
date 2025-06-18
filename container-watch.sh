@@ -64,6 +64,11 @@ while [[ ${1:-} != "" ]]; do
       echo -e "${BLUE}[INFO] Running in PRUNE IMAGES mode: will prune images that are no longer referenced.${NC}"
       shift
       ;;
+    --backup-mounts)
+      BACKUP_MOUNTS=true
+      echo -e "${BLUE}[INFO] Running in BACKUP MOUNTS mode: will backup mounts for all running compose projects.${NC}"
+      shift
+      ;;
     *)
       break
       ;;
@@ -183,6 +188,41 @@ for dir in "${all_dirs[@]}"; do
   fi
 done
 
+find_mounts() {
+  local proj_dir="$1"
+  local proj_name="$2"
+  echo -e "  ${BLUE}- Finding mounts in compose files...${NC}"
+  # Find mounts
+  mapfile -t mounts < <(docker compose -f "$proj_dir/docker-compose.yml" config --services | \
+    xargs -n1 docker compose -f "$proj_dir/docker-compose.yml" config | \
+    awk -v svc="$svc" '
+      $1 == svc":" {flag=1; next} \
+      flag && $1 == "volumes:" {print $2; exit}')
+
+}
+
+#Backup found Mounts with type bind
+backup_mounts() {
+  echo -e "${BLUE}[INFO] Backing up mounts for all running compose projects...${NC}"
+  find_mounts
+  for mount in "${mounts[@]}"; do
+    # Get mount source
+    source=$(echo "$mount" | awk -F ':' '{print $1}')
+    # Get mount target
+    target=$(echo "$mount" | awk -F ':' '{print $2}')
+    # Get mount type
+    type=$(echo "$mount" | awk -F ':' '{print $3}')
+    # Get mount options
+    options=$(echo "$mount" | awk -F ':' '{print $4}')
+    # Get mount source path
+    if [[ "$type" == "bind" ]]; then
+      echo -e "  ${BLUE}- Backing up mount $source{NC}"
+      docker compose -f "$proj_dir/docker-compose.yml" down
+      cp -r "$source" "$proj_dir/backup/$source"
+    fi
+  done
+}
+
 # Function: check images consistency
 check_images() {
   echo -e "${BLUE}[INFO] Checking images for all running compose projects...${NC}"
@@ -242,6 +282,10 @@ check_images() {
 
 if [[ "$CHECK_IMAGES" == true ]]; then
   check_images
+fi
+
+if [[ "$BACKUP_MOUNTS" == true ]]; then
+  backup_mounts
 fi
 
 if [[ "$PRUNE_IMAGES" == true ]]; then
