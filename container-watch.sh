@@ -168,7 +168,6 @@ check_images() {
 
 if [[ "$CHECK_IMAGES" == true ]]; then
   check_images
-  exit 0
 fi
 
 # Default update flow
@@ -199,10 +198,6 @@ if [[ "$FORCE_ALL" == false ]]; then
   git pull origin main || { echo -e "${RED}[ERROR] git pull failed${NC}"; exit 1; }
 fi
 
-if [[ "$FORCE_ALL" == false && -z "$changed_dirs" ]]; then
-  echo -e "${BLUE}[INFO] No compose file changes detected.${NC}"
-  exit 0
-fi
 
 # Find all immediate subdirectories with docker-compose.yml
 mapfile -t all_dirs < <(find . -mindepth 1 -maxdepth 1 -type d -printf '%f\n')
@@ -250,6 +245,11 @@ done
 if [[ "$PRUNE_IMAGES" == true ]]; then
   echo -e "${BLUE}[INFO] Pruning images...${NC}"
   docker image prune -f
+fi
+
+if [[ "$FORCE_ALL" == false && -z "$changed_dirs" ]]; then
+  echo -e "${BLUE}[INFO] No compose file changes detected.${NC}"
+  exit 0
 fi
 
 if [[ "$updated_any" == false ]]; then
