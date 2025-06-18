@@ -109,66 +109,7 @@ redeploy_project() {
   docker compose -f "$proj_dir/docker-compose.yml" up -d || echo -e "  ${RED}[ERROR] Failed to restart $proj_name${NC}"
 }
 
-# Function: check images consistency
-check_images() {
-  echo -e "${BLUE}[INFO] Checking images for all running compose projects...${NC}"
-  # Find immediate subdirectories
-  mapfile -t dirs < <(find . -mindepth 1 -maxdepth 1 -type d -printf '%f\n')
-  for dir in "${dirs[@]}"; do
-    # Skip ignored projects
-    if [[ " ${IGNORE_PROJECTS[@]} " =~ " $dir " ]]; then
-      continue
-    fi
-    project_dir="$REPO_ROOT/$dir"
-    compose_file="$project_dir/docker-compose.yml"
-    [[ -f "$compose_file" ]] || continue
-    # Check if any container is running
-    if ! docker compose -p "$dir" -f "$compose_file" ps | grep -q "Up"; then
-      continue
-    fi
-    echo -e "\n${YELLOW}[CHECK] Project: $dir${NC}"
-    (
-      cd "$project_dir" || exit 1
-      redeployed=false
-      # Iterate services and compare expected vs actual images
-      for svc in $(docker compose -f "$compose_file" config --services); do
-        # Get expected image for service
-        expected=$(docker compose -f "$compose_file" config | \
-          awk -v svc="$svc" '
-            $1 == svc":" {flag=1; next} \
-            flag && $1 == "image:" {print $2; exit}')
-        # Check if image should be ignored
-        if [[ " ${IGNORE_IMAGES[@]} " =~ " $expected " ]]; then
-          echo -e "  ${BLUE}[SKIP] Ignoring image $expected for service '$svc'${NC}"
-          continue
-        fi
-        # Get container ID
-        cid=$(docker compose -p "$dir" -f "$compose_file" ps -q "$svc")
-        if [[ -z "$cid" ]]; then
-          echo -e "  ${YELLOW}[WARN] Service '$svc' is not running.${NC}"
-          continue
-        fi
-        # Get actual image
-        actual=$(docker inspect --format='{{.Config.Image}}' "$cid")
-        # Compare
-        if [[ "$expected" == "$actual" ]]; then
-          echo -e "  ${GREEN}[MATCH]   $svc -> $actual${NC}"
-        else
-          echo -e "  ${RED}[MISMATCH] $svc expected '$expected' but running '$actual'${NC}"
-          if [ "$redeployed" = false ]; then
-            echo -e "  ${BLUE}[ACTION] Redeploying project $dir due to image mismatch...${NC}"
-            redeploy_project "$project_dir" "$dir"
-            redeployed=true
-          fi
-        fi
-      done
-    )
-  done
-}
 
-if [[ "$CHECK_IMAGES" == true ]]; then
-  check_images
-fi
 
 # Default update flow
 echo -e "${BLUE}[INFO] Fetching latest changes from origin/main...${NC}"
@@ -241,6 +182,67 @@ for dir in "${all_dirs[@]}"; do
     echo ""
   fi
 done
+
+# Function: check images consistency
+check_images() {
+  echo -e "${BLUE}[INFO] Checking images for all running compose projects...${NC}"
+  # Find immediate subdirectories
+  mapfile -t dirs < <(find . -mindepth 1 -maxdepth 1 -type d -printf '%f\n')
+  for dir in "${dirs[@]}"; do
+    # Skip ignored projects
+    if [[ " ${IGNORE_PROJECTS[@]} " =~ " $dir " ]]; then
+      continue
+    fi
+    project_dir="$REPO_ROOT/$dir"
+    compose_file="$project_dir/docker-compose.yml"
+    [[ -f "$compose_file" ]] || continue
+    # Check if any container is running
+    if ! docker compose -p "$dir" -f "$compose_file" ps | grep -q "Up"; then
+      continue
+    fi
+    echo -e "\n${YELLOW}[CHECK] Project: $dir${NC}"
+    (
+      cd "$project_dir" || exit 1
+      redeployed=false
+      # Iterate services and compare expected vs actual images
+      for svc in $(docker compose -f "$compose_file" config --services); do
+        # Get expected image for service
+        expected=$(docker compose -f "$compose_file" config | \
+          awk -v svc="$svc" '
+            $1 == svc":" {flag=1; next} \
+            flag && $1 == "image:" {print $2; exit}')
+        # Check if image should be ignored
+        if [[ " ${IGNORE_IMAGES[@]} " =~ " $expected " ]]; then
+          echo -e "  ${BLUE}[SKIP] Ignoring image $expected for service '$svc'${NC}"
+          continue
+        fi
+        # Get container ID
+        cid=$(docker compose -p "$dir" -f "$compose_file" ps -q "$svc")
+        if [[ -z "$cid" ]]; then
+          echo -e "  ${YELLOW}[WARN] Service '$svc' is not running.${NC}"
+          continue
+        fi
+        # Get actual image
+        actual=$(docker inspect --format='{{.Config.Image}}' "$cid")
+        # Compare
+        if [[ "$expected" == "$actual" ]]; then
+          echo -e "  ${GREEN}[MATCH]   $svc -> $actual${NC}"
+        else
+          echo -e "  ${RED}[MISMATCH] $svc expected '$expected' but running '$actual'${NC}"
+          if [ "$redeployed" = false ]; then
+            echo -e "  ${BLUE}[ACTION] Redeploying project $dir due to image mismatch...${NC}"
+            redeploy_project "$project_dir" "$dir"
+            redeployed=true
+          fi
+        fi
+      done
+    )
+  done
+}
+
+if [[ "$CHECK_IMAGES" == true ]]; then
+  check_images
+fi
 
 if [[ "$PRUNE_IMAGES" == true ]]; then
   echo -e "${BLUE}[INFO] Pruning images...${NC}"
