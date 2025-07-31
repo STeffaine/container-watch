@@ -86,6 +86,7 @@ cleanup() {
 trap cleanup EXIT
 
 check_lock() {
+  echo -e "entering check_lock"
   if [[ -f "$LOCK_FILE" && "$FORCE_RUN" == false ]]; then
     echo -e "${RED}[ERROR] Found .container-watch.lock. This script is probably already running. Exiting...${NC}"
     exit 1
@@ -93,6 +94,7 @@ check_lock() {
 }
 
 create_lock() {
+  echo -e "entering create_lock"
   touch "$LOCK_FILE"
   LOCK_HELD=true
 }
@@ -109,6 +111,7 @@ fi
 
 # Function: perform project redeploy
 redeploy_project() {
+  echo -e "Entered redeploy_project"
   local proj_dir="$1"
   local proj_name="$2"
   echo -e "  ${BLUE}- Pulling latest images for redeploy...${NC}"
