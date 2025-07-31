@@ -85,15 +85,20 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Check to see if .container-watch.lock exists
-if [[ -f "$LOCK_FILE" && "$FORCE_RUN" == false ]]; then
-  echo -e "${RED}[ERROR] Found .container-watch.lock. This script is probably already running. Exiting...${NC}"
-  exit 1
-fi
+check_lock() {
+  if [[ -f "$LOCK_FILE" && "$FORCE_RUN" == false ]]; then
+    echo -e "${RED}[ERROR] Found .container-watch.lock. This script is probably already running. Exiting...${NC}"
+    exit 1
+  fi
+}
 
-# Create lock file and record that we own it
-touch "$LOCK_FILE"
-LOCK_HELD=true
+create_lock() {
+  touch "$LOCK_FILE"
+  LOCK_HELD=true
+}
+
+check_lock
+create_lock
 
 # Ensure we're on 'main' branch
 current_branch=$(git rev-parse --abbrev-ref HEAD)
