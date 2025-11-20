@@ -8,6 +8,7 @@
 # - Optional: Ignore specific image(s) with --ignore-images
 # - Optional: Ignore specific project(s) with --ignore-project
 # - Optional: Prune images with --prune-images
+# - Optional: Use a custom config file with --config
 
 set -u  # Abort on unset vars
 
@@ -24,21 +25,27 @@ CHECK_IMAGES=false
 IGNORE_IMAGES=()
 IGNORE_PROJECTS=()
 PRUNE_IMAGES=false
+CONFIG_FILE="container-watch.conf"
 
 # Parse flags
 while [[ ${1:-} != "" ]]; do
   case "$1" in
-    --force-run)
+    -q|--quiet)
+      QUIET=true
+      echo -e "${BLUE}[INFO] Running in QUIET mode: will not ask for confirmation.${NC}"
+      shift
+      ;;
+    -f|--force-run)
       FORCE_RUN=true
       echo -e "${BLUE}[INFO] Running in FORCE RUN mode: will run no matter what.${NC}"
       shift
       ;;
-    --force-all)
+    -a|--force-all)
       FORCE_ALL=true
       echo -e "${BLUE}[INFO] Running in FORCE ALL mode: will update all currently running projects.${NC}"
       shift
       ;;
-    --check-images)
+    -i|--check-images)
       CHECK_IMAGES=true
       echo -e "${BLUE}[INFO] Running in CHECK IMAGES mode: will validate running container images against compose definitions.${NC}"
       shift
@@ -59,7 +66,13 @@ while [[ ${1:-} != "" ]]; do
       done
       echo -e "${BLUE}[INFO] Ignoring projects: ${IGNORE_PROJECTS[*]}${NC}"
       ;;
-    --prune-images)
+    -c|--config)
+      echo -e "${BLUE}[INFO] Using config file: $1${NC}"
+      shift
+      CONFIG_FILE="$1"
+      shift
+      ;;
+    -p|--prune-images)
       PRUNE_IMAGES=true
       echo -e "${BLUE}[INFO] Running in PRUNE IMAGES mode: will prune images that are no longer referenced.${NC}"
       shift
@@ -68,6 +81,21 @@ while [[ ${1:-} != "" ]]; do
       BACKUP_MOUNTS=true
       echo -e "${BLUE}[INFO] Running in BACKUP MOUNTS mode: will backup mounts for all running compose projects.${NC}"
       shift
+      ;;
+    -h|--help)
+      echo -e "${BLUE}[INFO] Usage: container-watch.sh [OPTIONS]${NC}"
+      echo -e "${BLUE}[INFO] Options:${NC}"
+      echo -e "${BLUE}[INFO]   --quiet${NC}                  Run in quiet mode (no confirmation)"
+      echo -e "${BLUE}[INFO]   --force-run${NC}              Force run even if .container-watch.lock exists"
+      echo -e "${BLUE}[INFO]   --force-all${NC}              Force update all currently running projects"
+      echo -e "${BLUE}[INFO]   --check-images${NC}           Check running container images against compose definitions"
+      echo -e "${BLUE}[INFO]   --ignore-images${NC}          Ignore specific image(s) from check-images"
+      echo -e "${BLUE}[INFO]   --ignore-project${NC}         Ignore specific project(s) from check-images"
+      echo -e "${BLUE}[INFO]   --prune-images${NC}           Prune images that are no longer referenced"
+      echo -e "${BLUE}[INFO]   --backup-mounts${NC}          Backup mounts for all running compose projects"
+      echo -e "${BLUE}[INFO]   --config${NC}                 Use a custom config file"
+      echo -e "${BLUE}[INFO]   --help${NC}                   Print this help message"
+      exit 0
       ;;
     *)
       break
@@ -101,6 +129,13 @@ create_lock() {
 
 check_lock
 create_lock
+
+# Check if config file exists and is readable, if it is, source it. if not, print a warning and exit
+if [[ -f "$CONFIG_FILE" ]]; then
+  source "$CONFIG_FILE"
+else
+  echo -e "${YELLOW}[WARN] Config file $CONFIG_FILE not found. Using default values.${NC}"
+fi
 
 # Ensure we're on 'main' branch
 current_branch=$(git rev-parse --abbrev-ref HEAD)
@@ -279,7 +314,16 @@ check_images() {
           echo -e "  ${RED}[MISMATCH] $svc expected '$expected' but running '$actual'${NC}"
           if [ "$redeployed" = false ]; then
             echo -e "  ${BLUE}[ACTION] Redeploying project $dir due to image mismatch...${NC}"
-            redeploy_project "$project_dir" "$dir"
+            if [[ "$QUIET" != true ]]; then
+             redeploy_project "$project_dir" "$dir"
+            else
+              read -p "  ${BLUE}[ACTION] Redeploy project $dir due to image mismatch? [y/N]${NC} " yn
+              case $yn in
+                [Yy]* ) redeploy_project "$project_dir" "$dir"; break;;
+                [Nn]* ) break;;
+                * ) echo "Please answer yes or no.";;
+              esac
+            fi
             redeployed=true
           fi
         fi
