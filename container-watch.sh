@@ -17,7 +17,6 @@ CHECK_IMAGES=false
 PRUNE_IMAGES=false
 QUIET=false
 
-CONFIG_FILE="container-watch.conf"
 
 IGNORE_IMAGES=()
 IGNORE_PROJECTS=()
