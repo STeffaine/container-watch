@@ -26,6 +26,7 @@ IGNORE_IMAGES=()
 IGNORE_PROJECTS=()
 PRUNE_IMAGES=false
 CONFIG_FILE="container-watch.conf"
+QUIET=false
 
 # Parse flags
 while [[ ${1:-} != "" ]]; do
@@ -314,7 +315,7 @@ check_images() {
           echo -e "  ${RED}[MISMATCH] $svc expected '$expected' but running '$actual'${NC}"
           if [ "$redeployed" = false ]; then
             echo -e "  ${BLUE}[ACTION] Redeploying project $dir due to image mismatch...${NC}"
-            if [[ "$QUIET" != true ]]; then
+            if [[ "{$QUIET:-false}" == true ]]; then
              redeploy_project "$project_dir" "$dir"
             else
               read -p "  ${BLUE}[ACTION] Redeploy project $dir due to image mismatch? [y/N]${NC} " yn
