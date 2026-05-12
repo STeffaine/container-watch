@@ -291,8 +291,6 @@ redeploy_project() {
     fi
 
     docker compose up -d \
-      --remove-orphans \
-      --pull always \
       "${COMPOSE_UP_OPTIONS[@]}"
 
     sleep 5
