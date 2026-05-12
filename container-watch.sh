@@ -1,356 +1,450 @@
-#!/bin/bash
+# container-watch.sh
 
-# Auto-deploy and image-check for Docker Compose projects
-# - Only restarts services where docker-compose.yml has changed
-# - Only restarts if the project is already running
-# - Optional: force update all currently running projects with --force-all
-# - Optional: check-image consistency with --check-images (with colored output)
-# - Optional: Ignore specific image(s) with --ignore-images
-# - Optional: Ignore specific project(s) with --ignore-project
-# - Optional: Prune images with --prune-images
-# - Optional: Use a custom config file with --config
-
-set -u  # Abort on unset vars
+set -euo pipefail
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
 REPO_ROOT="$(pwd)"
+LOCK_FILE="/tmp/container-watch.lock"
+
 FORCE_ALL=false
 FORCE_RUN=false
 CHECK_IMAGES=false
-IGNORE_IMAGES=()
-IGNORE_PROJECTS=()
 PRUNE_IMAGES=false
-CONFIG_FILE="container-watch.conf"
 QUIET=false
 
-# Parse flags
-while [[ ${1:-} != "" ]]; do
-  case "$1" in
-    -q|--quiet)
-      QUIET=true
-      echo -e "${BLUE}[INFO] Running in QUIET mode: will not ask for confirmation.${NC}"
-      shift
-      ;;
-    -f|--force-run)
-      FORCE_RUN=true
-      echo -e "${BLUE}[INFO] Running in FORCE RUN mode: will run no matter what.${NC}"
-      shift
-      ;;
-    -a|--force-all)
-      FORCE_ALL=true
-      echo -e "${BLUE}[INFO] Running in FORCE ALL mode: will update all currently running projects.${NC}"
-      shift
-      ;;
-    -i|--check-images)
-      CHECK_IMAGES=true
-      echo -e "${BLUE}[INFO] Running in CHECK IMAGES mode: will validate running container images against compose definitions.${NC}"
-      shift
-      ;;
-    --ignore-images)
-      shift
-      while [[ ${1:-} != "" && ! "$1" =~ ^-- ]]; do
-        IGNORE_IMAGES+=("$1")
-        shift
-      done
-      echo -e "${BLUE}[INFO] Ignoring images: ${IGNORE_IMAGES[*]}${NC}"
-      ;;
-    --ignore-project)
-      shift
-      while [[ ${1:-} != "" && ! "$1" =~ ^-- ]]; do
-        IGNORE_PROJECTS+=("$1")
-        shift
-      done
-      echo -e "${BLUE}[INFO] Ignoring projects: ${IGNORE_PROJECTS[*]}${NC}"
-      ;;
-    -c|--config)
-      echo -e "${BLUE}[INFO] Using config file: $1${NC}"
-      shift
-      CONFIG_FILE="$1"
-      shift
-      ;;
-    -p|--prune-images)
-      PRUNE_IMAGES=true
-      echo -e "${BLUE}[INFO] Running in PRUNE IMAGES mode: will prune images that are no longer referenced.${NC}"
-      shift
-      ;;
-    --backup-mounts)
-      BACKUP_MOUNTS=true
-      echo -e "${BLUE}[INFO] Running in BACKUP MOUNTS mode: will backup mounts for all running compose projects.${NC}"
-      shift
-      ;;
-    -h|--help)
-      echo -e "${BLUE}[INFO] Usage: container-watch.sh [OPTIONS]${NC}"
-      echo -e "${BLUE}[INFO] Options:${NC}"
-      echo -e "${BLUE}[INFO]   --quiet${NC}                  Run in quiet mode (no confirmation)"
-      echo -e "${BLUE}[INFO]   --force-run${NC}              Force run even if .container-watch.lock exists"
-      echo -e "${BLUE}[INFO]   --force-all${NC}              Force update all currently running projects"
-      echo -e "${BLUE}[INFO]   --check-images${NC}           Check running container images against compose definitions"
-      echo -e "${BLUE}[INFO]   --ignore-images${NC}          Ignore specific image(s) from check-images"
-      echo -e "${BLUE}[INFO]   --ignore-project${NC}         Ignore specific project(s) from check-images"
-      echo -e "${BLUE}[INFO]   --prune-images${NC}           Prune images that are no longer referenced"
-      echo -e "${BLUE}[INFO]   --backup-mounts${NC}          Backup mounts for all running compose projects"
-      echo -e "${BLUE}[INFO]   --config${NC}                 Use a custom config file"
-      echo -e "${BLUE}[INFO]   --help${NC}                   Print this help message"
-      exit 0
-      ;;
-    *)
-      break
-      ;;
-  esac
-done
+CONFIG_FILE="container-watch.conf"
 
-LOCK_FILE=".container-watch.lock"
-LOCK_HELD=false
+IGNORE_IMAGES=()
+IGNORE_PROJECTS=()
 
-cleanup() {
-  if [[ "$LOCK_HELD" == true ]]; then
-    rm "$LOCK_FILE"
-  fi
+show_help() {
+  cat <<EOF
+Usage:
+  ./container-watch.sh [options]
+
+Options:
+  -q, --quiet
+  -f, --force-run
+  -a, --force-all
+  -i, --check-images
+  -p, --prune-images
+  -c, --config FILE
+  --ignore-images IMG...
+  --ignore-project PROJ...
+  -h, --help
+EOF
 }
-trap cleanup EXIT
 
-check_lock() {
-  echo -e "entering check_lock"
-  if [[ -f "$LOCK_FILE" && "$FORCE_RUN" == false ]]; then
-    echo -e "${RED}[ERROR] Found .container-watch.lock. This script is probably already running. Exiting...${NC}"
+log_info() {
+  echo -e "${BLUE}[INFO]${NC} $*"
+}
+
+log_warn() {
+  echo -e "${YELLOW}[WARN]${NC} $*"
+}
+
+log_error() {
+  echo -e "${RED}[ERROR]${NC} $*"
+}
+
+log_success() {
+  echo -e "${GREEN}[DONE]${NC} $*"
+}
+
+check_dependencies() {
+  local deps=("git" "docker" "flock" "jq")
+
+  for dep in "${deps[@]}"; do
+    if ! command -v "$dep" >/dev/null 2>&1; then
+      log_error "Missing dependency: $dep"
+      exit 1
+    fi
+  done
+
+  if ! docker compose version >/dev/null 2>&1; then
+    log_error "Docker Compose plugin not available"
     exit 1
   fi
 }
 
-create_lock() {
-  echo -e "entering create_lock"
-  touch "$LOCK_FILE"
-  LOCK_HELD=true
-}
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -q|--quiet)
+      QUIET=true
+      shift
+      ;;
 
-check_lock
-create_lock
+    -f|--force-run)
+      FORCE_RUN=true
+      shift
+      ;;
 
-# Check if config file exists and is readable, if it is, source it. if not, print a warning and exit
-if [[ -f "$CONFIG_FILE" ]]; then
-  source "$CONFIG_FILE"
-else
-  echo -e "${YELLOW}[WARN] Config file $CONFIG_FILE not found. Using default values.${NC}"
-fi
+    -a|--force-all)
+      FORCE_ALL=true
+      shift
+      ;;
 
-# Ensure we're on 'main' branch
-current_branch=$(git rev-parse --abbrev-ref HEAD)
-if [[ "$current_branch" != "main" ]]; then
-  echo -e "${BLUE}[INFO] Switching from '$current_branch' to 'main'...${NC}"
-  git checkout main || { echo -e "${RED}[ERROR] Failed to checkout main${NC}"; exit 1; }
-fi
+    -i|--check-images)
+      CHECK_IMAGES=true
+      shift
+      ;;
 
-# Function: perform project redeploy
-redeploy_project() {
-  echo -e "Entered redeploy_project"
-  local proj_dir="$1"
-  local proj_name="$2"
-  echo -e "  ${BLUE}- Pulling latest images for redeploy...${NC}"
-  docker compose -f "$proj_dir/docker-compose.yml" pull || echo -e "  ${YELLOW}[WARN] Failed to pull images in $proj_name${NC}"
-  echo -e "  ${BLUE}- Shutting down old containers for redeploy...${NC}"
-  docker compose -f "$proj_dir/docker-compose.yml" down --remove-orphans || echo -e "  ${YELLOW}[WARN] Failed to shut down $proj_name${NC}"
-  echo -e "  ${BLUE}- Starting updated services for redeploy...${NC}"
-  docker compose -f "$proj_dir/docker-compose.yml" up -d || echo -e "  ${RED}[ERROR] Failed to restart $proj_name${NC}"
-}
+    -p|--prune-images)
+      PRUNE_IMAGES=true
+      shift
+      ;;
 
+    -c|--config)
+      shift
+      CONFIG_FILE="$1"
+      shift
+      ;;
 
+    --ignore-images)
+      shift
+      while [[ $# -gt 0 && ! "$1" =~ ^- ]]; do
+        IGNORE_IMAGES+=("$1")
+        shift
+      done
+      ;;
 
-# Default update flow
-echo -e "${BLUE}[INFO] Fetching latest changes from origin/main...${NC}"
-git fetch origin main || { echo -e "${RED}[ERROR] git fetch failed${NC}"; exit 1; }
+    --ignore-project)
+      shift
+      while [[ $# -gt 0 && ! "$1" =~ ^- ]]; do
+        IGNORE_PROJECTS+=("$1")
+        shift
+      done
+      ;;
 
-changed_dirs=""
-if [[ "$FORCE_ALL" == false ]]; then
-  echo -e "${BLUE}[INFO] Fetching changes from origin/main...${NC}"
-  git fetch origin main || { echo -e "${RED}[ERROR] git fetch failed${NC}"; exit 1; }
+    -h|--help)
+      show_help
+      exit 0
+      ;;
 
-  changed_files=$(git diff --name-only HEAD..origin/main)
-  compose_files=$(echo "$changed_files" | grep -E 'docker-compose\.ya?ml$' || true)
-
-  if [[ -n "$compose_files" ]]; then
-    changed_dirs=$(echo "$compose_files" \
-      | xargs -n1 dirname \
-      | sed 's|^\./||' \
-      | sort -u)
-  fi
-
-  if [[ -z "$changed_dirs" ]]; then
-    echo -e "${BLUE}[INFO] No compose file changes detected.${NC}"
-    exit 0
-  fi
-
-  echo -e "${BLUE}[INFO] Pulling latest changes from origin/main...${NC}"
-  git pull origin main || { echo -e "${RED}[ERROR] git pull failed${NC}"; exit 1; }
-fi
-
-
-# Find all immediate subdirectories with docker-compose.yml
-mapfile -t all_dirs < <(find . -mindepth 1 -maxdepth 1 -type d -printf '%f\n')
-updated_any=false
-for dir in "${all_dirs[@]}"; do
-  # Skip ignored projects
-  if [[ " ${IGNORE_PROJECTS[@]} " =~ " $dir " ]]; then
-    continue
-  fi
-  project_dir="$REPO_ROOT/$dir"
-  [[ -f "$project_dir/docker-compose.yml" ]] || continue
-  project_name="$dir"
-  run_update=false
-  if [[ "$FORCE_ALL" == true ]]; then
-    if docker compose -p "$project_name" -f "$project_dir/docker-compose.yml" ps | grep -q "Up"; then
-      run_update=true
-      echo -e "${YELLOW}[FORCE-ALL] Updating running project: $project_name${NC}"
-    fi
-  elif echo "$changed_dirs" | grep -q "^$dir$"; then
-    if docker compose -p "$project_name" -f "$project_dir/docker-compose.yml" ps | grep -q "Up"; then
-      run_update=true
-      echo -e "${YELLOW}[CHANGED] Updating changed running project: $project_name${NC}"
-    else
-      echo -e "${YELLOW}[SKIP] $project_name changed but not running. Skipping.${NC}"
-    fi
-  fi
-  if [[ "$run_update" == true ]]; then
-    (
-      cd "$project_dir" || { echo -e "${RED}[ERROR] Cannot cd into $project_dir${NC}"; exit 1; }
-      echo -e "  ${BLUE}- Pulling latest images...${NC}"
-      docker compose pull || echo -e "  ${YELLOW}[WARN] Failed to pull images in $project_name${NC}"
-
-      echo -e "  ${BLUE}- Shutting down old containers...${NC}"
-      docker compose down --remove-orphans || echo -e "  ${YELLOW}[WARN] Failed to shut down $project_name${NC}"
-
-      echo -e "  ${BLUE}- Starting updated services...${NC}"
-      docker compose up -d || echo -e "  ${RED}[ERROR] Failed to restart $project_name${NC}"
-    )
-    updated_any=true
-    echo -e "${GREEN}[DONE] Updated $project_name${NC}"
-    echo ""
-  fi
+    *)
+      log_error "Unknown argument: $1"
+      exit 1
+      ;;
+  esac
 done
 
-find_mounts() {
-  local proj_dir="$1"
-  local proj_name="$2"
-  echo -e "  ${BLUE}- Finding mounts in compose files...${NC}"
-  # Find mounts
-  mapfile -t mounts < <(docker compose -f "$proj_dir/docker-compose.yml" config --services | \
-    xargs -n1 docker compose -f "$proj_dir/docker-compose.yml" config | \
-    awk -v svc="$svc" '
-      $1 == svc":" {flag=1; next} \
-      flag && $1 == "volumes:" {print $2; exit}')
+acquire_lock() {
+  exec 200>"$LOCK_FILE"
 
+  if [[ "$FORCE_RUN" == true ]]; then
+    log_warn "Bypassing lock"
+    return
+  fi
+
+  if ! flock -n 200; then
+    log_error "Another instance is already running"
+    exit 1
+  fi
 }
 
-#Backup found Mounts with type bind
-backup_mounts() {
-  echo -e "${BLUE}[INFO] Backing up mounts for all running compose projects...${NC}"
-  find_mounts
-  for mount in "${mounts[@]}"; do
-    # Get mount source
-    source=$(echo "$mount" | awk -F ':' '{print $1}')
-    # Get mount target
-    target=$(echo "$mount" | awk -F ':' '{print $2}')
-    # Get mount type
-    type=$(echo "$mount" | awk -F ':' '{print $3}')
-    # Get mount options
-    options=$(echo "$mount" | awk -F ':' '{print $4}')
-    # Get mount source path
-    if [[ "$type" == "bind" ]]; then
-      echo -e "  ${BLUE}- Backing up mount $source{NC}"
-      docker compose -f "$proj_dir/docker-compose.yml" down
-      cp -r "$source" "$proj_dir/backup/$source"
+load_config() {
+  if [[ -f "$CONFIG_FILE" ]]; then
+    if [[ ! -r "$CONFIG_FILE" ]]; then
+      log_error "Cannot read config file"
+      exit 1
     fi
+
+    # shellcheck disable=SC1090
+    source "$CONFIG_FILE"
+  else
+    log_warn "Config file not found"
+  fi
+}
+
+sync_git() {
+  git fetch origin
+
+  local upstream
+  upstream="$(git rev-parse --abbrev-ref --symbolic-full-name "@{u}" 2>/dev/null || true)"
+
+  if [[ -z "$upstream" ]]; then
+    log_error "No upstream tracking branch"
+    exit 1
+  fi
+
+  git reset --hard "$upstream"
+}
+
+array_contains() {
+  local seeking="$1"
+  shift
+
+  local item
+
+  for item in "$@"; do
+    [[ "$item" == "$seeking" ]] && return 0
   done
+
+  return 1
 }
 
-# Function: check images consistency
+load_project_env_options() {
+  local compose_dir="$1"
+
+  COMPOSE_DOWN_OPTIONS=()
+  COMPOSE_UP_OPTIONS=()
+
+  local env_file="$compose_dir/.env"
+
+  if [[ ! -f "$env_file" ]]; then
+    return
+  fi
+
+  local down_opts
+  local up_opts
+
+  down_opts="$(grep '^CW_COMPOSE_DOWN_OPTIONS=' "$env_file" | cut -d '=' -f2- || true)"
+  up_opts="$(grep '^CW_COMPOSE_UP_OPTIONS=' "$env_file" | cut -d '=' -f2- || true)"
+
+  if [[ -n "$down_opts" ]]; then
+    read -r -a COMPOSE_DOWN_OPTIONS <<< "$down_opts"
+  fi
+
+  if [[ -n "$up_opts" ]]; then
+    read -r -a COMPOSE_UP_OPTIONS <<< "$up_opts"
+  fi
+}
+
+discover_projects() {
+  find . -type f \( \
+    -name "docker-compose.yml" -o \
+    -name "docker-compose.yaml" -o \
+    -name "compose.yml" -o \
+    -name "compose.yaml" \
+  \)
+}
+
+get_changed_projects() {
+  local changed_files
+  changed_files="$(git diff --name-only HEAD@{1} HEAD || true)"
+
+  local changed_projects=()
+
+  while read -r file; do
+    [[ -z "$file" ]] && continue
+
+    local dir
+    dir="$(dirname "$file")"
+
+    changed_projects+=("$dir")
+  done <<< "$changed_files"
+
+  printf '%s\n' "${changed_projects[@]}" | sort -u
+}
+
+project_running() {
+  local compose_file="$1"
+
+  docker compose -f "$compose_file" ps --status running 2>/dev/null | grep -q .
+}
+
+verify_health() {
+  local compose_file="$1"
+
+  local unhealthy
+
+  unhealthy=$(
+    docker compose -f "$compose_file" ps --format json 2>/dev/null | \
+      jq -r '.[] | select(.Health == "unhealthy") | .Name' || true
+  )
+
+  if [[ -n "$unhealthy" ]]; then
+    log_error "Unhealthy containers detected"
+    echo "$unhealthy"
+    return 1
+  fi
+
+  return 0
+}
+
+redeploy_project() {
+  local compose_file="$1"
+  local project_name="$2"
+
+  local compose_dir
+  compose_dir="$(dirname "$compose_file")"
+
+  load_project_env_options "$compose_dir"
+
+  log_info "Updating project: $project_name"
+
+  (
+    cd "$compose_dir"
+
+    if ! docker compose pull; then
+      log_error "Image pull failed"
+      exit 1
+    fi
+
+    if [[ ${#COMPOSE_DOWN_OPTIONS[@]} -gt 0 ]]; then
+      docker compose down "${COMPOSE_DOWN_OPTIONS[@]}"
+    fi
+
+    docker compose up -d \
+      --remove-orphans \
+      --pull always \
+      "${COMPOSE_UP_OPTIONS[@]}"
+
+    sleep 5
+
+    if ! verify_health "$compose_file"; then
+      log_error "Health verification failed"
+      exit 1
+    fi
+  )
+
+  log_success "Updated $project_name"
+}
+
 check_images() {
-  echo -e "${BLUE}[INFO] Checking images for all running compose projects...${NC}"
-  # Find immediate subdirectories
-  mapfile -t dirs < <(find . -mindepth 1 -maxdepth 1 -type d -printf '%f\n')
-  for dir in "${dirs[@]}"; do
-    # Skip ignored projects
-    if [[ " ${IGNORE_PROJECTS[@]} " =~ " $dir " ]]; then
+  log_info "Checking image consistency"
+
+  while read -r compose_file; do
+    local dir
+    dir="$(dirname "$compose_file")"
+
+    local project_name
+    project_name="$(basename "$dir")"
+
+    if array_contains "$project_name" "${IGNORE_PROJECTS[@]}"; then
       continue
     fi
-    project_dir="$REPO_ROOT/$dir"
-    compose_file="$project_dir/docker-compose.yml"
-    [[ -f "$compose_file" ]] || continue
-    # Check if any container is running
-    if ! docker compose -p "$dir" -f "$compose_file" ps | grep -q "Up"; then
+
+    if ! project_running "$compose_file"; then
       continue
     fi
-    echo -e "\n${YELLOW}[CHECK] Project: $dir${NC}"
-    (
-      cd "$project_dir" || exit 1
-      redeployed=false
-      # Iterate services and compare expected vs actual images
-      for svc in $(docker compose -f "$compose_file" config --services); do
-        # Get expected image for service
-        expected=$(docker compose -f "$compose_file" config | \
-          awk -v svc="$svc" '
-            $1 == svc":" {flag=1; next} \
-            flag && $1 == "image:" {print $2; exit}')
-        # Check if image should be ignored
-        if [[ " ${IGNORE_IMAGES[@]} " =~ " $expected " ]]; then
-          echo -e "  ${BLUE}[SKIP] Ignoring image $expected for service '$svc'${NC}"
-          continue
-        fi
-        # Get container ID
-        cid=$(docker compose -p "$dir" -f "$compose_file" ps -q "$svc")
-        if [[ -z "$cid" ]]; then
-          echo -e "  ${YELLOW}[WARN] Service '$svc' is not running.${NC}"
-          continue
-        fi
-        # Get actual image
-        actual=$(docker inspect --format='{{.Config.Image}}' "$cid")
-        # Compare
-        if [[ "$expected" == "$actual" ]]; then
-          echo -e "  ${GREEN}[MATCH]   $svc -> $actual${NC}"
+
+    local services
+    services="$(docker compose -f "$compose_file" config --services)"
+
+    while read -r svc; do
+      [[ -z "$svc" ]] && continue
+
+      local cid
+      cid="$(docker compose -f "$compose_file" ps -q "$svc")"
+
+      [[ -z "$cid" ]] && continue
+
+      local expected
+      expected="$(docker compose -f "$compose_file" config | awk -v svc="$svc" '
+        $1 == svc ":" {found=1; next}
+        found && $1 == "image:" {print $2; exit}
+      ')"
+
+      [[ -z "$expected" ]] && continue
+
+      if array_contains "$expected" "${IGNORE_IMAGES[@]}"; then
+        continue
+      fi
+
+      local actual
+      actual="$(docker inspect --format '{{.Config.Image}}' "$cid")"
+
+      if [[ "$expected" != "$actual" ]]; then
+        echo -e "${RED}[MISMATCH]${NC} $svc"
+        echo "expected: $expected"
+        echo "actual:   $actual"
+
+        if [[ "$QUIET" == true ]]; then
+          redeploy_project "$compose_file" "$project_name"
         else
-          echo -e "  ${RED}[MISMATCH] $svc expected '$expected' but running '$actual'${NC}"
-          if [ "$redeployed" = false ]; then
-            echo -e "  ${BLUE}[ACTION] Redeploying project $dir due to image mismatch...${NC}"
-            if [[ "{$QUIET:-false}" == true ]]; then
-             redeploy_project "$project_dir" "$dir"
-            else
-              read -p "  ${BLUE}[ACTION] Redeploy project $dir due to image mismatch? [y/N]${NC} " yn
-              case $yn in
-                [Yy]* ) redeploy_project "$project_dir" "$dir"; break;;
-                [Nn]* ) break;;
-                * ) echo "Please answer yes or no.";;
-              esac
-            fi
-            redeployed=true
-          fi
+          read -rp "Redeploy project $project_name? [y/N] " yn
+
+          case "$yn" in
+            [Yy]*)
+              redeploy_project "$compose_file" "$project_name"
+              ;;
+          esac
+        fi
+
+        break
+      fi
+    done <<< "$services"
+  done < <(discover_projects)
+}
+
+main_update_flow() {
+  local changed_projects=()
+
+  if [[ "$FORCE_ALL" == false ]]; then
+    mapfile -t changed_projects < <(get_changed_projects)
+
+    if [[ ${#changed_projects[@]} -eq 0 ]]; then
+      log_info "No changed compose projects detected"
+      return
+    fi
+  fi
+
+  local updated_any=false
+
+  while read -r compose_file; do
+    local dir
+    dir="$(dirname "$compose_file")"
+
+    local project_name
+    project_name="$(basename "$dir")"
+
+    if array_contains "$project_name" "${IGNORE_PROJECTS[@]}"; then
+      continue
+    fi
+
+    if ! project_running "$compose_file"; then
+      continue
+    fi
+
+    local should_update=false
+
+    if [[ "$FORCE_ALL" == true ]]; then
+      should_update=true
+    else
+      local changed
+
+      for changed in "${changed_projects[@]}"; do
+        if [[ "$changed" == "$dir" ]]; then
+          should_update=true
+          break
         fi
       done
-    )
-  done
+    fi
+
+    if [[ "$should_update" == true ]]; then
+      redeploy_project "$compose_file" "$project_name"
+      updated_any=true
+    fi
+  done < <(discover_projects)
+
+  if [[ "$updated_any" == false ]]; then
+    log_info "No services updated"
+  fi
 }
+
+prune_images() {
+  docker image prune -f
+}
+
+check_dependencies
+acquire_lock
+load_config
+sync_git
+
+main_update_flow
 
 if [[ "$CHECK_IMAGES" == true ]]; then
   check_images
 fi
 
-if [[ "$BACKUP_MOUNTS" == true ]]; then
-  backup_mounts
-fi
-
 if [[ "$PRUNE_IMAGES" == true ]]; then
-  echo -e "${BLUE}[INFO] Pruning images...${NC}"
-  docker image prune -f
+  prune_images
 fi
 
-if [[ "$FORCE_ALL" == false && -z "$changed_dirs" ]]; then
-  echo -e "${BLUE}[INFO] No compose file changes detected.${NC}"
-  exit 0
-fi
-
-if [[ "$updated_any" == false ]]; then
-  echo -e "${BLUE}[INFO] No services were updated.${NC}"
-fi
+log_success "Completed successfully"
