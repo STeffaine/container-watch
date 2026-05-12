@@ -33,7 +33,6 @@ Options:
   -a, --force-all
   -i, --check-images
   -p, --prune-images
-  -c, --config FILE
   --ignore-images IMG...
   --ignore-project PROJ...
   -h, --help
@@ -99,12 +98,6 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
 
-    -c|--config)
-      shift
-      CONFIG_FILE="$1"
-      shift
-      ;;
-
     --ignore-images)
       shift
       while [[ $# -gt 0 && ! "$1" =~ ^- ]]; do
@@ -144,20 +137,6 @@ acquire_lock() {
   if ! flock -n 200; then
     log_error "Another instance is already running"
     exit 1
-  fi
-}
-
-load_config() {
-  if [[ -f "$CONFIG_FILE" ]]; then
-    if [[ ! -r "$CONFIG_FILE" ]]; then
-      log_error "Cannot read config file"
-      exit 1
-    fi
-
-    # shellcheck disable=SC1090
-    source "$CONFIG_FILE"
-  else
-    log_warn "Config file not found"
   fi
 }
 
@@ -432,7 +411,6 @@ prune_images() {
 
 check_dependencies
 acquire_lock
-load_config
 sync_git
 
 main_update_flow
