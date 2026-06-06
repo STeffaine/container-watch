@@ -14,6 +14,7 @@ LOCK_FILE="/tmp/container-watch.lock"
 
 FORCE_ALL=false
 FORCE_RUN=false
+FORCE_RESET=false
 CHECK_IMAGES=false
 PRUNE_IMAGES=false
 QUIET=false
@@ -34,6 +35,7 @@ Options:
   -i, --check-images : Checks all running containers against their expected images and redeploys if mismatches are found
   -p, --prune-images : Prunes dangling images after updates
   -t, --target DIR : Specifies the target directory to operate in (defaults to current directory)
+  --force-reset : Automatically run git reset --hard if git pull fails and fast-forward isn't possible
   --ignore-images IMG... : Specifies images to ignore during consistency checks (can be repeated)
   --ignore-project PROJ... : Specifies project names to ignore during consistency checks (can be repeated)
   -h, --help : Shows this help message
@@ -86,6 +88,11 @@ while [[ $# -gt 0 ]]; do
 
     -a|--force-all)
       FORCE_ALL=true
+      shift
+      ;;
+
+    --force-reset)
+      FORCE_RESET=true
       shift
       ;;
 
@@ -163,6 +170,11 @@ sync_git() {
   fi
 
   if git pull --ff-only; then
+    return
+  fi
+
+  if [[ "$FORCE_RESET" == true ]]; then
+    git reset --hard "$upstream"
     return
   fi
 
