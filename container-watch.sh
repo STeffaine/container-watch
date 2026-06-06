@@ -335,7 +335,7 @@ redeploy_project() {
 }
 
 check_images() {
-  log_info "Checking image consistency"
+  log_info "Checking image consistency --check-images enabled"
 
   while read -r compose_file; do
     local dir
@@ -489,6 +489,7 @@ main_update_flow() {
 }
 
 prune_images() {
+  log_info "Pruning dangling images"
   docker image prune -f
 }
 
@@ -516,3 +517,4 @@ if [[ "$PRUNE_IMAGES" == true ]]; then
 fi
 
 log_success "Completed successfully"
+exit 0
