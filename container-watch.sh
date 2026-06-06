@@ -162,7 +162,25 @@ sync_git() {
     exit 1
   fi
 
-  git reset --hard "$upstream"
+  if git pull --ff-only; then
+    return
+  fi
+
+  if [[ "$QUIET" == true ]]; then
+    log_error "git pull failed and cannot fast-forward in quiet mode"
+    exit 1
+  fi
+
+  read -rp "git pull failed. Reset hard to $upstream? This will discard local changes. You should be careful doing this, you could lose data. [y/N] " yn
+  case "$yn" in
+    [Yy]*)
+      git reset --hard "$upstream"
+      ;;
+    *)
+      log_error "Aborting because git pull failed"
+      exit 1
+      ;;
+  esac
 }
 
 array_contains() {
