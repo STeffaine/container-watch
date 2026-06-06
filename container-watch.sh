@@ -28,15 +28,15 @@ Usage:
   ./container-watch.sh [options]
 
 Options:
-  -q, --quiet
-  -f, --force-run
-  -a, --force-all
-  -i, --check-images
-  -p, --prune-images
-  -t, --target DIR
-  --ignore-images IMG...
-  --ignore-project PROJ...
-  -h, --help
+  -q, --quiet : Shuts up and runs the script
+  -f, --force-run : Forces the script to run even if another instance is detected (bypasses locking)
+  -a, --force-all : Forces redeployment of all running projects regardless of changes
+  -i, --check-images : Checks all running containers against their expected images and redeploys if mismatches are found
+  -p, --prune-images : Prunes dangling images after updates
+  -t, --target DIR : Specifies the target directory to operate in (defaults to current directory)
+  --ignore-images IMG... : Specifies images to ignore during consistency checks (can be repeated)
+  --ignore-project PROJ... : Specifies project names to ignore during consistency checks (can be repeated)
+  -h, --help : Shows this help message
 EOF
 }
 
