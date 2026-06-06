@@ -8,7 +8,8 @@ YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-REPO_ROOT="$(pwd)"
+TARGET_DIR="$(pwd)"
+REPO_ROOT=""
 LOCK_FILE="/tmp/container-watch.lock"
 
 FORCE_ALL=false
@@ -32,6 +33,7 @@ Options:
   -a, --force-all
   -i, --check-images
   -p, --prune-images
+  -t, --target DIR
   --ignore-images IMG...
   --ignore-project PROJ...
   -h, --help
@@ -55,7 +57,7 @@ log_success() {
 }
 
 check_dependencies() {
-  local deps=("git" "docker" "flock" "jq")
+  local deps=("git" "docker" "flock")
 
   for dep in "${deps[@]}"; do
     if ! command -v "$dep" >/dev/null 2>&1; then
@@ -113,6 +115,16 @@ while [[ $# -gt 0 ]]; do
       done
       ;;
 
+    -t|--target)
+      shift
+      if [[ $# -eq 0 || "$1" =~ ^- ]]; then
+        log_error "Missing target directory for --target"
+        exit 1
+      fi
+      TARGET_DIR="$1"
+      shift
+      ;;
+
     -h|--help)
       show_help
       exit 0
@@ -164,6 +176,24 @@ array_contains() {
   done
 
   return 1
+}
+
+is_latest_image() {
+  local image="$1"
+
+  if [[ "$image" == *@sha256:* ]]; then
+    return 1
+  fi
+
+  image="${image%%@*}"
+  local name="${image##*/}"
+
+  if [[ "$name" == *:* ]]; then
+    local tag="${name##*:}"
+    [[ "$tag" == "latest" ]]
+  else
+    return 0
+  fi
 }
 
 load_project_env_options() {
@@ -229,16 +259,8 @@ project_running() {
 verify_health() {
   local compose_file="$1"
 
-  local unhealthy
-
-  unhealthy=$(
-    docker compose -f "$compose_file" ps --format json 2>/dev/null | \
-      jq -r '.[] | select(.Health == "unhealthy") | .Name' || true
-  )
-
-  if [[ -n "$unhealthy" ]]; then
+  if docker compose -f "$compose_file" ps --format json 2>/dev/null | grep -q '"Health".*"unhealthy"'; then
     log_error "Unhealthy containers detected"
-    echo "$unhealthy"
     return 1
   fi
 
@@ -345,6 +367,38 @@ check_images() {
 
         break
       fi
+
+      if is_latest_image "$expected"; then
+        local current_image_id
+        current_image_id="$(docker inspect --format '{{.Image}}' "$cid" 2>/dev/null || true)"
+
+        if docker pull "$expected" >/dev/null 2>&1; then
+          local latest_image_id
+          latest_image_id="$(docker inspect --format '{{.Id}}' "$expected" 2>/dev/null || true)"
+
+          if [[ -n "$current_image_id" && -n "$latest_image_id" && "$current_image_id" != "$latest_image_id" ]]; then
+            echo -e "${YELLOW}[LATEST]${NC} $svc is not using the latest image digest"
+            echo "current id: $current_image_id"
+            echo "latest id:  $latest_image_id"
+
+            if [[ "$QUIET" == true ]]; then
+              redeploy_project "$compose_file" "$project_name"
+            else
+              read -rp "Redeploy project $project_name? [y/N] " yn
+
+              case "$yn" in
+                [Yy]*)
+                  redeploy_project "$compose_file" "$project_name"
+                  ;;
+              esac
+            fi
+
+            break
+          fi
+        else
+          log_warn "Unable to check latest image for $expected"
+        fi
+      fi
     done <<< "$services"
   done < <(discover_projects)
 }
@@ -407,6 +461,15 @@ main_update_flow() {
 prune_images() {
   docker image prune -f
 }
+
+if [[ ! -d "$TARGET_DIR" ]]; then
+  log_error "Target directory does not exist: $TARGET_DIR"
+  exit 1
+fi
+
+cd "$TARGET_DIR"
+TARGET_DIR="$(pwd)"
+REPO_ROOT="$TARGET_DIR"
 
 check_dependencies
 acquire_lock
