@@ -49,6 +49,7 @@ To check for image mismatches between running containers and `docker-compose.yml
 
 - `--force-all`: Force a full redeploy of all docker-compose projects that are currently running.
 - `--check-images`: Check for image mismatches between running containers and `docker-compose.yml`.
+- `--depth N`: Set how many directory levels deep to search for compose files (default: `1`).
 
 ## Requirements
 
@@ -58,7 +59,7 @@ To check for image mismatches between running containers and `docker-compose.yml
 
 ## Limitations
 
-- Only looks one directory deep for `docker-compose.yml` files.
+- By default, only looks one directory deep for compose files. Use `--depth` to customize discovery depth.
 - Only supports `docker-compose.yml` files with a single `docker-compose.yml` file.
 - Image mismatch detections assumes standard `docker-compose.yml` formats.
 

@@ -11,6 +11,7 @@ NC='\033[0m'
 TARGET_DIR="$(pwd)"
 REPO_ROOT=""
 LOCK_FILE="/tmp/container-watch.lock"
+COMPOSE_SEARCH_DEPTH=1
 
 FORCE_ALL=false
 FORCE_RUN=false
@@ -32,6 +33,7 @@ Options:
   -q, --quiet : Shuts up and runs the script
   -f, --force-run : Forces the script to run even if another instance is detected (bypasses locking)
   -a, --force-all : Forces redeployment of all running projects regardless of changes
+  -d, --depth N : Sets how many directory levels deep to search for compose files (default: 1)
   -i, --check-images : Checks all running containers against their expected images and redeploys if mismatches are found
   -p, --prune-images : Prunes dangling images after updates
   -t, --target DIR : Specifies the target directory to operate in (defaults to current directory)
@@ -88,6 +90,22 @@ while [[ $# -gt 0 ]]; do
 
     -a|--force-all)
       FORCE_ALL=true
+      shift
+      ;;
+
+    -d|--depth)
+      shift
+      if [[ $# -eq 0 || "$1" =~ ^- ]]; then
+        log_error "Missing depth value for --depth"
+        exit 1
+      fi
+
+      if ! [[ "$1" =~ ^[0-9]+$ ]]; then
+        log_error "Depth must be a non-negative integer"
+        exit 1
+      fi
+
+      COMPOSE_SEARCH_DEPTH="$1"
       shift
       ;;
 
@@ -254,7 +272,10 @@ load_project_env_options() {
 }
 
 discover_projects() {
-  find . -type f \( \
+  local max_file_depth
+  max_file_depth=$((COMPOSE_SEARCH_DEPTH + 1))
+
+  find . -maxdepth "$max_file_depth" -type f \( \
     -name "docker-compose.yml" -o \
     -name "docker-compose.yaml" -o \
     -name "compose.yml" -o \
