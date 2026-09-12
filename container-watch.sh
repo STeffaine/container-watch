@@ -12,7 +12,7 @@ TARGET_DIR="$(pwd)"
 REPO_ROOT=""
 LOCK_FILE="/tmp/container-watch.lock"
 COMPOSE_SEARCH_DEPTH=1
-SCRIPT_VERSION="1.1.1"
+SCRIPT_VERSION="1.2.0"
 
 FORCE_ALL=false
 FORCE_RUN=false
@@ -20,6 +20,7 @@ FORCE_RESET=false
 CHECK_IMAGES=false
 PRUNE_IMAGES=false
 QUIET=false
+CHECK_ALL_IMAGE_IDS=false
 
 
 IGNORE_IMAGES=()
@@ -36,6 +37,7 @@ Options:
   -a, --force-all : Forces redeployment of all running projects regardless of changes
   -d, --depth N : Sets how many directory levels deep to search for compose files (default: 1)
   -i, --check-images : Checks all running containers against their expected images and redeploys if mismatches are found
+  --check-all-image-ids : While checking images, pull and compare image IDs for all tags (not only latest)
   -p, --prune-images : Prunes dangling images after updates
   -t, --target DIR : Specifies the target directory to operate in (defaults to current directory)
   -v, --version : Shows script version and exits
@@ -118,6 +120,11 @@ while [[ $# -gt 0 ]]; do
 
     -i|--check-images)
       CHECK_IMAGES=true
+      shift
+      ;;
+
+    --check-all-image-ids)
+      CHECK_ALL_IMAGE_IDS=true
       shift
       ;;
 
@@ -402,6 +409,10 @@ redeploy_project() {
 check_images() {
   log_info "Checking image consistency --check-images enabled"
 
+  if [[ "$CHECK_ALL_IMAGE_IDS" == true ]]; then
+    log_info "Image ID drift checks enabled for all image tags"
+  fi
+
   while read -r compose_file; do
     local dir
     dir="$(dirname "$compose_file")"
@@ -460,7 +471,7 @@ check_images() {
         break
       fi
 
-      if is_latest_image "$expected"; then
+      if [[ "$CHECK_ALL_IMAGE_IDS" == true ]] || is_latest_image "$expected"; then
         local current_image_id
         current_image_id="$(docker inspect --format '{{.Image}}' "$cid" 2>/dev/null || true)"
 
