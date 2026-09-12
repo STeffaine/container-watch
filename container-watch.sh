@@ -12,7 +12,7 @@ TARGET_DIR="$(pwd)"
 REPO_ROOT=""
 LOCK_FILE="/tmp/container-watch.lock"
 COMPOSE_SEARCH_DEPTH=1
-SCRIPT_VERSION="1.1.0"
+SCRIPT_VERSION="1.1.1"
 
 FORCE_ALL=false
 FORCE_RUN=false
@@ -251,6 +251,43 @@ is_latest_image() {
   fi
 }
 
+get_expected_service_image() {
+  local compose_file="$1"
+  local service_name="$2"
+
+  docker compose -f "$compose_file" config 2>/dev/null | awk -v svc="$service_name" '
+    /^services:[[:space:]]*$/ {
+      in_services=1
+      in_target=0
+      next
+    }
+
+    in_services && /^[^[:space:]]/ {
+      in_services=0
+      in_target=0
+    }
+
+    !in_services {
+      next
+    }
+
+    $0 ~ ("^  " svc ":[[:space:]]*$") {
+      in_target=1
+      next
+    }
+
+    in_target && $0 ~ /^  [^[:space:]][^:]*:[[:space:]]*$/ {
+      in_target=0
+    }
+
+    in_target && $0 ~ /^    image:[[:space:]]*/ {
+      sub(/^    image:[[:space:]]*/, "", $0)
+      print $0
+      exit
+    }
+  '
+}
+
 load_project_env_options() {
   local compose_dir="$1"
 
@@ -392,10 +429,7 @@ check_images() {
       [[ -z "$cid" ]] && continue
 
       local expected
-      expected="$(docker compose -f "$compose_file" config | awk -v svc="$svc" '
-        $1 == svc ":" {found=1; next}
-        found && $1 == "image:" {print $2; exit}
-      ')"
+      expected="$(get_expected_service_image "$compose_file" "$svc")"
 
       [[ -z "$expected" ]] && continue
 
