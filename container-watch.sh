@@ -304,7 +304,7 @@ get_changed_projects() {
 project_running() {
   local compose_file="$1"
 
-  docker compose -f "$compose_file" ps --status running 2>/dev/null | grep -q .
+  docker compose -f "$compose_file" ps --format json 2>/dev/null | grep -q '"State":"running"'
 }
 
 verify_health() {
