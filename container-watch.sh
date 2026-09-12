@@ -12,6 +12,7 @@ TARGET_DIR="$(pwd)"
 REPO_ROOT=""
 LOCK_FILE="/tmp/container-watch.lock"
 COMPOSE_SEARCH_DEPTH=1
+SCRIPT_VERSION="1.1.0"
 
 FORCE_ALL=false
 FORCE_RUN=false
@@ -37,6 +38,7 @@ Options:
   -i, --check-images : Checks all running containers against their expected images and redeploys if mismatches are found
   -p, --prune-images : Prunes dangling images after updates
   -t, --target DIR : Specifies the target directory to operate in (defaults to current directory)
+  -v, --version : Shows script version and exits
   --force-reset : Automatically run git reset --hard if git pull fails and fast-forward isn't possible
   --ignore-images IMG... : Specifies images to ignore during consistency checks (can be repeated)
   --ignore-project PROJ... : Specifies project names to ignore during consistency checks (can be repeated)
@@ -152,6 +154,11 @@ while [[ $# -gt 0 ]]; do
 
     -h|--help)
       show_help
+      exit 0
+      ;;
+
+    -v|--version)
+      echo "container-watch.sh v$SCRIPT_VERSION"
       exit 0
       ;;
 
@@ -304,7 +311,7 @@ get_changed_projects() {
 project_running() {
   local compose_file="$1"
 
-  docker compose -f "$compose_file" ps --format json 2>/dev/null | grep -q '"State":"running"'
+  docker compose -f "$compose_file" ps -q --status running 2>/dev/null | grep -q .
 }
 
 verify_health() {
@@ -525,6 +532,7 @@ REPO_ROOT="$TARGET_DIR"
 
 check_dependencies
 acquire_lock
+log_info "container-watch.sh v$SCRIPT_VERSION"
 sync_git
 
 main_update_flow
