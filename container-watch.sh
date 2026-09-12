@@ -12,7 +12,7 @@ TARGET_DIR="$(pwd)"
 REPO_ROOT=""
 LOCK_FILE="/tmp/container-watch.lock"
 COMPOSE_SEARCH_DEPTH=1
-SCRIPT_VERSION="1.2.0"
+SCRIPT_VERSION="1.2.1"
 
 FORCE_ALL=false
 FORCE_RUN=false
@@ -420,13 +420,19 @@ check_images() {
     local project_name
     project_name="$(basename "$dir")"
 
+    log_info "Inspecting compose file: $compose_file (project: $project_name)"
+
     if array_contains "$project_name" "${IGNORE_PROJECTS[@]}"; then
+      log_info "Skipping project $project_name (ignored)"
       continue
     fi
 
     if ! project_running "$compose_file"; then
+      log_info "Skipping project $project_name (no running containers)"
       continue
     fi
+
+    log_info "Project $project_name is running; checking services"
 
     local services
     services="$(docker compose -f "$compose_file" config --services)"
@@ -434,22 +440,35 @@ check_images() {
     while read -r svc; do
       [[ -z "$svc" ]] && continue
 
+      log_info "Checking service: $project_name/$svc"
+
       local cid
       cid="$(docker compose -f "$compose_file" ps -q "$svc")"
 
-      [[ -z "$cid" ]] && continue
+      if [[ -z "$cid" ]]; then
+        log_info "Skipping service $project_name/$svc (not running)"
+        continue
+      fi
 
       local expected
       expected="$(get_expected_service_image "$compose_file" "$svc")"
 
-      [[ -z "$expected" ]] && continue
+      if [[ -z "$expected" ]]; then
+        log_warn "No expected image found for $project_name/$svc"
+        continue
+      fi
 
       if array_contains "$expected" "${IGNORE_IMAGES[@]}"; then
+        log_info "Skipping image check for $project_name/$svc (ignored image: $expected)"
         continue
       fi
 
       local actual
       actual="$(docker inspect --format '{{.Config.Image}}' "$cid")"
+
+      log_info "Image compare for $project_name/$svc"
+      log_info "Expected image: $expected"
+      log_info "Running image:  $actual"
 
       if [[ "$expected" != "$actual" ]]; then
         echo -e "${RED}[MISMATCH]${NC} $svc"
@@ -475,9 +494,14 @@ check_images() {
         local current_image_id
         current_image_id="$(docker inspect --format '{{.Image}}' "$cid" 2>/dev/null || true)"
 
+        log_info "Checking pulled image ID drift for $project_name/$svc ($expected)"
+
         if docker pull "$expected" >/dev/null 2>&1; then
           local latest_image_id
           latest_image_id="$(docker inspect --format '{{.Id}}' "$expected" 2>/dev/null || true)"
+
+          log_info "Current image ID: $current_image_id"
+          log_info "Pulled image ID:  $latest_image_id"
 
           if [[ -n "$current_image_id" && -n "$latest_image_id" && "$current_image_id" != "$latest_image_id" ]]; then
             echo -e "${YELLOW}[LATEST]${NC} $svc is not using the latest image digest"
@@ -501,8 +525,12 @@ check_images() {
         else
           log_warn "Unable to check latest image for $expected"
         fi
+      else
+        log_info "Skipping image ID drift check for $project_name/$svc (pinned tag and --check-all-image-ids not set)"
       fi
     done <<< "$services"
+
+    log_info "Finished checking project: $project_name"
   done < <(discover_projects)
 }
 
